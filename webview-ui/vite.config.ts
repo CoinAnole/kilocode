@@ -1,6 +1,5 @@
 import path, { resolve } from "path"
 import fs from "fs"
-import { execSync } from "child_process"
 
 import { defineConfig, type PluginOption, type Plugin } from "vite"
 import react from "@vitejs/plugin-react"
@@ -8,18 +7,7 @@ import tailwindcss from "@tailwindcss/vite"
 
 import { sourcemapPlugin } from "./src/vite-plugins/sourcemapPlugin"
 import { cssPerEntryPlugin } from "./src/kilocode/vite-plugins/cssPerEntryPlugin" // kilocode_change
-
-function getGitSha() {
-	let gitSha: string | undefined = undefined
-
-	try {
-		gitSha = execSync("git rev-parse HEAD").toString().trim()
-	} catch (_error) {
-		// Do nothing.
-	}
-
-	return gitSha
-}
+import { getGitSha } from "./src/utils/getGitSha" // kilocode_change
 
 const wasmPlugin = (): Plugin => ({
 	name: "wasm",
@@ -67,7 +55,7 @@ export default defineConfig(({ mode }) => {
 
 	const pkg = getPkg()
 	// kilocode_change end
-	const gitSha = getGitSha()
+	const gitSha = getGitSha(path.resolve(__dirname, "..")) // kilocode_change
 
 	const define: Record<string, any> = {
 		"process.platform": JSON.stringify(process.platform),

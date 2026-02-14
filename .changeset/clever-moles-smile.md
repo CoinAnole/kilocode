@@ -2,4 +2,4 @@
 "kilo-code": patch
 ---
 
-Fix Moonshot coding endpoint model selection so it includes all Moonshot models while keeping `kimi-for-coding` hidden on non-coding endpoints.
+Fix Moonshot model selection to keep `kimi-for-coding` hidden on non-coding endpoints while preserving the full model list on coding endpoints, and restore commit hash display in About settings builds.
