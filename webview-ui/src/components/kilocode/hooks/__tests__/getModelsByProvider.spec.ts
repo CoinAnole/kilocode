@@ -6,6 +6,7 @@ import {
 	internationalZAiDefaultModelId,
 	mainlandZAiModels,
 	mainlandZAiDefaultModelId,
+	moonshotModels,
 } from "@roo-code/types"
 import { RouterModels } from "@roo/api"
 import { getModelsByProvider, getOptionsForProvider } from "../useProviderModels"
@@ -101,6 +102,32 @@ describe("getModelsByProvider", () => {
 		expect(result.models).toEqual(mainlandZAiModels)
 		expect(result.defaultModel).toEqual(mainlandZAiDefaultModelId)
 	})
+
+	// kilocode_change start
+	it("hides kimi-for-coding for Moonshot non-coding endpoints", () => {
+		const result = getModelsByProvider({
+			provider: "moonshot",
+			routerModels,
+			kilocodeDefaultModel: "test-default-model",
+			options: { isMoonshotCodingEndpoint: false },
+		})
+
+		expect(result.models["kimi-for-coding"]).toBeUndefined()
+		expect(result.models["kimi-k2-thinking"]).toEqual(moonshotModels["kimi-k2-thinking"])
+	})
+
+	it("shows full Moonshot models for coding endpoint", () => {
+		const result = getModelsByProvider({
+			provider: "moonshot",
+			routerModels,
+			kilocodeDefaultModel: "test-default-model",
+			options: { isMoonshotCodingEndpoint: true },
+		})
+
+		expect(result.models["kimi-for-coding"]).toEqual(moonshotModels["kimi-for-coding"])
+		expect(result.models["kimi-k2-thinking"]).toEqual(moonshotModels["kimi-k2-thinking"])
+	})
+	// kilocode_change end
 })
 
 describe("getOptionsForProvider", () => {
@@ -120,6 +147,16 @@ describe("getOptionsForProvider", () => {
 	})
 
 	// kilocode_change start
+	it("returns isMoonshotCodingEndpoint: true for moonshot coding endpoint", () => {
+		const result = getOptionsForProvider("moonshot", { moonshotBaseUrl: "https://api.kimi.com/coding/v1" })
+		expect(result).toEqual({ isMoonshotCodingEndpoint: true })
+	})
+
+	it("returns isMoonshotCodingEndpoint: false for moonshot non-coding endpoint", () => {
+		const result = getOptionsForProvider("moonshot", { moonshotBaseUrl: "https://api.moonshot.ai/v1" })
+		expect(result).toEqual({ isMoonshotCodingEndpoint: false })
+	})
+
 	it("returns isChina: true for zai provider with china_api apiConfiguration", () => {
 		const result = getOptionsForProvider("zai", { zaiApiLine: "china_api" })
 		expect(result).toEqual({ isChina: true })

@@ -82,7 +82,9 @@ export const getModelsByProvider = ({
 	provider: ProviderName
 	routerModels: RouterModels
 	kilocodeDefaultModel: string
-	options: { isChina?: boolean }
+	// kilocode_change start
+	options: { isChina?: boolean; isMoonshotCodingEndpoint?: boolean }
+	// kilocode_change end
 }): { models: ModelRecord; defaultModel: string } => {
 	switch (provider) {
 		case "openrouter": {
@@ -286,8 +288,16 @@ export const getModelsByProvider = ({
 			}
 		}
 		case "moonshot": {
+			// kilocode_change start
+			const modelsAllowedByEndpoint = Object.fromEntries(
+				Object.entries(moonshotModels).filter(
+					([modelId]) => modelId !== "kimi-for-coding" || options.isMoonshotCodingEndpoint === true,
+				),
+			)
+			// kilocode_change end
 			return {
-				models: moonshotModels,
+				// kilocode_change
+				models: modelsAllowedByEndpoint,
 				defaultModel: moonshotDefaultModelId,
 			}
 		}
@@ -364,6 +374,12 @@ export const getModelsByProvider = ({
 
 export const getOptionsForProvider = (provider: ProviderName, apiConfiguration?: ProviderSettings) => {
 	switch (provider) {
+		// kilocode_change start
+		case "moonshot":
+			return {
+				isMoonshotCodingEndpoint: apiConfiguration?.moonshotBaseUrl === "https://api.kimi.com/coding/v1",
+			}
+		// kilocode_change end
 		case "zai":
 			// Determine which Z.AI model set to use based on the API line configuration
 			// kilocode_change start
@@ -371,7 +387,7 @@ export const getOptionsForProvider = (provider: ProviderName, apiConfiguration?:
 				isChina:
 					apiConfiguration?.zaiApiLine === "china_coding" || apiConfiguration?.zaiApiLine === "china_api",
 			}
-			// kilocode_change end
+		// kilocode_change end
 		default:
 			return {}
 	}
