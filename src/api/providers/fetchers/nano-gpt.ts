@@ -1,7 +1,7 @@
 // kilocode_change - new file
 import { z } from "zod"
 
-import type { ModelInfo } from "@roo-code/types"
+import { TOOL_PROTOCOL, type ModelInfo } from "@roo-code/types"
 
 import type { ApiHandlerOptions } from "../../../shared/api"
 import { DEFAULT_HEADERS } from "../constants"
@@ -38,6 +38,14 @@ export const nanoGptModelSchema = z.object({
 })
 
 export type NanoGptModel = z.infer<typeof nanoGptModelSchema>
+
+// kilocode_change start
+const NANO_GPT_KIMI_NATIVE_TOOL_MODEL_IDS = new Set(["moonshotai/kimi-k2.5:thinking", "TEE/kimi-k2.5-thinking"])
+
+function supportsNativeToolsOnNanoGpt(modelId: string): boolean {
+	return NANO_GPT_KIMI_NATIVE_TOOL_MODEL_IDS.has(modelId)
+}
+// kilocode_change end
 
 /**
  * NanoGptModelsResponse
@@ -161,6 +169,14 @@ export const parseNanoGptModel = ({ model, displayName }: { model: NanoGptModel;
 		displayName: displayName || model.name,
 		supportsPromptCache: false,
 		supportsImages: model.capabilities?.vision || false,
+		// kilocode_change start
+		...(supportsNativeToolsOnNanoGpt(model.id)
+			? {
+					supportsNativeTools: true,
+					defaultToolProtocol: TOOL_PROTOCOL.NATIVE,
+				}
+			: {}),
+		// kilocode_change end
 	}
 
 	return modelInfo
