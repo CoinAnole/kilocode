@@ -169,12 +169,15 @@ export class ChutesHandler extends RouterProvider implements SingleCompletionHan
 			const toolCallIdsByIndex = new Map<number, string>()
 			for (const [index, toolCall] of message.tool_calls.entries()) {
 				const toolCallId = this.getToolCallId({ id: toolCall.id, index }, toolCallIdsByIndex)
+				if (toolCall.type !== "function") {
+					continue
+				}
 				yield {
 					type: "tool_call_partial",
 					index,
 					id: toolCallId,
-					name: toolCall.function?.name,
-					arguments: toolCall.function?.arguments,
+					name: toolCall.function.name,
+					arguments: toolCall.function.arguments,
 				}
 				yield { type: "tool_call_end", id: toolCallId }
 			}
