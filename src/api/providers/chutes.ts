@@ -14,6 +14,10 @@ import { RouterProvider } from "./router-provider"
 import { getApiRequestTimeout } from "./utils/timeout-config"
 
 export class ChutesHandler extends RouterProvider implements SingleCompletionHandler {
+	// kilocode_change start
+	private static readonly KIMI_K2_5_TEE_MODEL_ID = "moonshotai/kimi-k2.5-tee"
+	// kilocode_change end
+
 	constructor(options: ApiHandlerOptions) {
 		super({
 			options,
@@ -32,6 +36,46 @@ export class ChutesHandler extends RouterProvider implements SingleCompletionHan
 			timeout: getApiRequestTimeout(),
 		}
 	}
+
+	private isKimiK2_5TeeModel(modelId: string): boolean {
+		return modelId.toLowerCase() === ChutesHandler.KIMI_K2_5_TEE_MODEL_ID
+	}
+
+	private getKimiTemperatureDefault(): number {
+		const isReasoningEnabled = this.options.enableReasoningEffort !== false
+		return isReasoningEnabled ? 1.0 : 0.6
+	}
+
+	private resolveToolChoice(
+		modelId: string,
+		metadata?: ApiHandlerCreateMessageMetadata,
+	): OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming["tool_choice"] | undefined {
+		if (!metadata?.tools || metadata.tools.length === 0) {
+			return metadata?.tool_choice
+		}
+
+		// Force strict native tool-calling for Chutes Kimi K2.5 to reduce empty assistant turns.
+		if (this.isKimiK2_5TeeModel(modelId) && (!metadata.tool_choice || metadata.tool_choice === "auto")) {
+			return "required"
+		}
+
+		return metadata.tool_choice
+	}
+
+	private extractReasoningText(delta: unknown): string | undefined {
+		if (!delta || typeof delta !== "object") {
+			return undefined
+		}
+
+		for (const key of ["reasoning_content", "reasoning"] as const) {
+			const value = (delta as Record<string, unknown>)[key]
+			if (typeof value === "string" && value.trim()) {
+				return value
+			}
+		}
+
+		return undefined
+	}
 	// kilocode_change end
 
 	private getCompletionParams(
@@ -40,6 +84,9 @@ export class ChutesHandler extends RouterProvider implements SingleCompletionHan
 		metadata?: ApiHandlerCreateMessageMetadata,
 	): OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming {
 		const { id: model, info } = this.getModel()
+		// kilocode_change start
+		const tool_choice = this.resolveToolChoice(model, metadata)
+		// kilocode_change end
 
 		// Centralized cap: clamp to 20% of the context window (unless provider-specific exceptions apply)
 		const max_tokens =
@@ -57,7 +104,7 @@ export class ChutesHandler extends RouterProvider implements SingleCompletionHan
 			stream: true,
 			stream_options: { include_usage: true },
 			...(metadata?.tools && { tools: metadata.tools }),
-			...(metadata?.tool_choice && { tool_choice: metadata.tool_choice }),
+			...(tool_choice && { tool_choice }),
 		}
 
 		// Only add temperature if model supports it
@@ -67,6 +114,73 @@ export class ChutesHandler extends RouterProvider implements SingleCompletionHan
 
 		return params
 	}
+
+	// kilocode_change start
+	private getNonStreamingCompletionParams(
+		systemPrompt: string,
+		messages: Anthropic.Messages.MessageParam[],
+		metadata?: ApiHandlerCreateMessageMetadata,
+	): OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming {
+		const { id: model, info } = this.getModel()
+		const tool_choice = this.resolveToolChoice(model, metadata)
+
+		const max_tokens =
+			getModelMaxOutputTokens({
+				modelId: model,
+				model: info,
+				settings: this.options,
+				format: "openai",
+			}) ?? undefined
+
+		const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
+			model,
+			max_tokens,
+			messages: [{ role: "system", content: systemPrompt }, ...convertToOpenAiMessages(messages)],
+			...(metadata?.tools && { tools: metadata.tools }),
+			...(tool_choice && { tool_choice }),
+		}
+
+		if (this.supportsTemperature(model)) {
+			params.temperature = this.options.modelTemperature ?? info.temperature
+		}
+
+		return params
+	}
+
+	private async *emitKimiReasoningOnlyFallback(
+		systemPrompt: string,
+		messages: Anthropic.Messages.MessageParam[],
+		metadata?: ApiHandlerCreateMessageMetadata,
+	): ApiStream {
+		const response = await this.client.chat.completions.create(
+			this.getNonStreamingCompletionParams(systemPrompt, messages, metadata),
+			this.getRequestOptions(),
+		)
+		const message = response.choices[0]?.message
+		if (!message) {
+			return
+		}
+
+		if (typeof message.content === "string" && message.content.trim()) {
+			yield { type: "text", text: message.content }
+		}
+
+		if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+			const toolCallIdsByIndex = new Map<number, string>()
+			for (const [index, toolCall] of message.tool_calls.entries()) {
+				const toolCallId = this.getToolCallId({ id: toolCall.id, index }, toolCallIdsByIndex)
+				yield {
+					type: "tool_call_partial",
+					index,
+					id: toolCallId,
+					name: toolCall.function?.name,
+					arguments: toolCall.function?.arguments,
+				}
+				yield { type: "tool_call_end", id: toolCallId }
+			}
+		}
+	}
+	// kilocode_change end
 
 	// kilocode_change start
 	private getToolCallId(
@@ -102,10 +216,13 @@ export class ChutesHandler extends RouterProvider implements SingleCompletionHan
 		const model = await this.fetchModel()
 
 		if (model.id.includes("DeepSeek-R1")) {
-			const stream = await this.client.chat.completions.create({
-				...this.getCompletionParams(systemPrompt, messages, metadata),
-				messages: convertToR1Format([{ role: "user", content: systemPrompt }, ...messages]),
-			}, this.getRequestOptions())
+			const stream = await this.client.chat.completions.create(
+				{
+					...this.getCompletionParams(systemPrompt, messages, metadata),
+					messages: convertToR1Format([{ role: "user", content: systemPrompt }, ...messages]),
+				},
+				this.getRequestOptions(),
+			)
 
 			const matcher = new XmlMatcher(
 				"think",
@@ -179,6 +296,9 @@ export class ChutesHandler extends RouterProvider implements SingleCompletionHan
 			// kilocode_change start
 			const activeToolCallIds = new Set<string>()
 			const toolCallIdsByIndex = new Map<number, string>()
+			let sawTextContent = false
+			let sawToolCalls = false
+			let sawReasoning = false
 			// kilocode_change end
 
 			for await (const chunk of stream) {
@@ -188,25 +308,25 @@ export class ChutesHandler extends RouterProvider implements SingleCompletionHan
 				// kilocode_change end
 
 				if (delta?.content) {
+					// kilocode_change start
+					sawTextContent = true
+					// kilocode_change end
 					yield { type: "text", text: delta.content }
 				}
 
 				// kilocode_change start
-				if (delta) {
-					for (const key of ["reasoning_content", "reasoning"] as const) {
-						if (key in delta) {
-							const reasoningContent = ((delta as any)[key] as string | undefined) || ""
-							if (reasoningContent.trim()) {
-								yield { type: "reasoning", text: reasoningContent }
-							}
-							break
-						}
-					}
+				const reasoningText = this.extractReasoningText(delta)
+				if (reasoningText) {
+					sawReasoning = true
+					yield { type: "reasoning", text: reasoningText }
 				}
 				// kilocode_change end
 
 				// Emit raw tool call chunks - NativeToolCallParser handles state management
 				if (delta && "tool_calls" in delta && Array.isArray(delta.tool_calls)) {
+					// kilocode_change start
+					sawToolCalls = true
+					// kilocode_change end
 					for (const toolCall of delta.tool_calls) {
 						// kilocode_change start
 						const toolCallId = this.getToolCallId(toolCall, toolCallIdsByIndex)
@@ -238,6 +358,16 @@ export class ChutesHandler extends RouterProvider implements SingleCompletionHan
 					}
 				}
 			}
+
+			// kilocode_change start
+			const shouldRunReasoningOnlyFallback =
+				this.isKimiK2_5TeeModel(model.id) && sawReasoning && !sawTextContent && !sawToolCalls
+			if (shouldRunReasoningOnlyFallback) {
+				for await (const chunk of this.emitKimiReasoningOnlyFallback(systemPrompt, messages, metadata)) {
+					yield chunk
+				}
+			}
+			// kilocode_change end
 		}
 	}
 
@@ -264,7 +394,11 @@ export class ChutesHandler extends RouterProvider implements SingleCompletionHan
 			// Only add temperature if model supports it
 			if (this.supportsTemperature(modelId)) {
 				const isDeepSeekR1 = modelId.includes("DeepSeek-R1")
-				const defaultTemperature = isDeepSeekR1 ? DEEP_SEEK_DEFAULT_TEMPERATURE : 0.5
+				// kilocode_change start
+				const defaultTemperature = isDeepSeekR1
+					? DEEP_SEEK_DEFAULT_TEMPERATURE
+					: (this.getModel().info.temperature ?? 0.5)
+				// kilocode_change end
 				requestParams.temperature = this.options.modelTemperature ?? defaultTemperature
 			}
 
@@ -294,12 +428,19 @@ export class ChutesHandler extends RouterProvider implements SingleCompletionHan
 		const baseInfo = shouldPreserveExplicitModelId ? this.defaultModelInfo : model.info
 		// kilocode_change end
 		const isDeepSeekR1 = effectiveModelId.includes("DeepSeek-R1")
+		// kilocode_change start
+		const isKimiK2_5Tee = this.isKimiK2_5TeeModel(effectiveModelId)
+		// kilocode_change end
 
 		return {
 			id: effectiveModelId,
 			info: {
 				...baseInfo,
-				temperature: isDeepSeekR1 ? DEEP_SEEK_DEFAULT_TEMPERATURE : 0.5,
+				temperature: isDeepSeekR1
+					? DEEP_SEEK_DEFAULT_TEMPERATURE
+					: isKimiK2_5Tee
+						? this.getKimiTemperatureDefault()
+						: 0.5,
 			},
 		}
 	}

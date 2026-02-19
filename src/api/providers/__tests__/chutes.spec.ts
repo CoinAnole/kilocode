@@ -184,6 +184,97 @@ describe("ChutesHandler", () => {
 
 		expect(chunks).toEqual([{ type: "reasoning", text: "Thinking through it..." }])
 	})
+
+	it("should prefer non-empty reasoning when reasoning_content is empty", async () => {
+		mockCreate.mockImplementationOnce(async () => ({
+			[Symbol.asyncIterator]: async function* () {
+				yield {
+					choices: [
+						{
+							delta: { reasoning_content: "", reasoning: "Use this reasoning text." },
+							index: 0,
+						},
+					],
+					usage: null,
+				}
+			},
+		}))
+
+		mockFetchModel.mockResolvedValueOnce({
+			id: "some-other-model",
+			info: { maxTokens: 1024, temperature: 0.7 },
+		})
+
+		const stream = handler.createMessage("system prompt", [])
+		const chunks = []
+		for await (const chunk of stream) {
+			chunks.push(chunk)
+		}
+
+		expect(chunks).toEqual([{ type: "reasoning", text: "Use this reasoning text." }])
+	})
+
+	it("should fallback to non-streaming response for Chutes Kimi when stream only emits reasoning", async () => {
+		mockCreate
+			.mockImplementationOnce(async () => ({
+				[Symbol.asyncIterator]: async function* () {
+					yield {
+						choices: [
+							{
+								delta: { reasoning: "Thinking...", reasoning_content: "Thinking..." },
+								index: 0,
+							},
+						],
+						usage: null,
+					}
+					yield {
+						choices: [
+							{
+								delta: {},
+								index: 0,
+								finish_reason: "length",
+							},
+						],
+						usage: {
+							prompt_tokens: 10,
+							completion_tokens: 5,
+						},
+					}
+				},
+			}))
+			.mockResolvedValueOnce({
+				choices: [
+					{
+						message: {
+							content: "Final answer from fallback",
+							tool_calls: [],
+						},
+					},
+				],
+			})
+
+		const kimiHandler = new ChutesHandler({
+			apiModelId: "moonshotai/Kimi-K2.5-TEE",
+			chutesApiKey: "test-chutes-api-key",
+		})
+		kimiHandler.fetchModel = vi.fn().mockResolvedValue({
+			id: "moonshotai/Kimi-K2.5-TEE",
+			info: { ...chutesDefaultModelInfo, temperature: 1.0 },
+		})
+
+		const stream = kimiHandler.createMessage("system prompt", [])
+		const chunks = []
+		for await (const chunk of stream) {
+			chunks.push(chunk)
+		}
+
+		expect(chunks).toEqual([
+			{ type: "reasoning", text: "Thinking..." },
+			{ type: "usage", inputTokens: 10, outputTokens: 5 },
+			{ type: "text", text: "Final answer from fallback" },
+		])
+		expect(mockCreate).toHaveBeenCalledTimes(2)
+	})
 	// kilocode_change end
 
 	it("should return default model when no model is specified", async () => {
@@ -471,6 +562,57 @@ describe("ChutesHandler", () => {
 		)
 	})
 
+	// kilocode_change start
+	it("createMessage should force required tool_choice for Chutes Kimi K2.5 when tool_choice is auto", async () => {
+		const tools = [
+			{
+				type: "function" as const,
+				function: {
+					name: "test_tool",
+					description: "A test tool",
+					parameters: { type: "object", properties: {} },
+				},
+			},
+		]
+
+		mockCreate.mockImplementationOnce(() => {
+			return {
+				[Symbol.asyncIterator]: () => ({
+					next: vi.fn().mockResolvedValueOnce({ done: true }),
+				}),
+			}
+		})
+
+		const kimiHandler = new ChutesHandler({
+			apiModelId: "moonshotai/Kimi-K2.5-TEE",
+			chutesApiKey: "test-chutes-api-key",
+		})
+		kimiHandler.fetchModel = vi.fn().mockResolvedValue({
+			id: "moonshotai/Kimi-K2.5-TEE",
+			info: { ...chutesDefaultModelInfo, temperature: 1.0 },
+		})
+
+		const stream = kimiHandler.createMessage("system prompt", [], {
+			tools,
+			tool_choice: "auto",
+			taskId: "test-task-id",
+		})
+		for await (const _ of stream) {
+			// noop
+		}
+
+		expect(mockCreate).toHaveBeenCalledWith(
+			expect.objectContaining({
+				tools,
+				tool_choice: "required",
+			}),
+			expect.objectContaining({
+				timeout: expect.any(Number),
+			}),
+		)
+	})
+	// kilocode_change end
+
 	it("should apply DeepSeek default temperature for R1 models", () => {
 		const testModelId = "deepseek-ai/DeepSeek-R1"
 		const handlerWithModel = new ChutesHandler({
@@ -509,7 +651,19 @@ describe("ChutesHandler", () => {
 		const model = handlerWithModel.getModel()
 
 		expect(model.id).toBe(unsupportedModelId)
-		expect(model.info.temperature).toBe(0.5)
+		expect(model.info.temperature).toBe(1.0)
+	})
+
+	it("should apply non-thinking default temperature for Chutes Kimi K2.5 when reasoning is disabled", () => {
+		const handlerWithModel = new ChutesHandler({
+			apiModelId: "moonshotai/Kimi-K2.5-TEE",
+			chutesApiKey: "test-chutes-api-key",
+			enableReasoningEffort: false,
+		})
+
+		const model = handlerWithModel.getModel()
+		expect(model.id).toBe("moonshotai/Kimi-K2.5-TEE")
+		expect(model.info.temperature).toBe(0.6)
 	})
 	// kilocode_change end
 })
