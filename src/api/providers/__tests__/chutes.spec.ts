@@ -563,7 +563,7 @@ describe("ChutesHandler", () => {
 	})
 
 	// kilocode_change start
-	it("createMessage should force required tool_choice for Chutes Kimi K2.5 when tool_choice is auto", async () => {
+	it("createMessage should preserve auto tool_choice for Chutes Kimi K2.5", async () => {
 		const tools = [
 			{
 				type: "function" as const,
@@ -604,7 +604,7 @@ describe("ChutesHandler", () => {
 		expect(mockCreate).toHaveBeenCalledWith(
 			expect.objectContaining({
 				tools,
-				tool_choice: "required",
+				tool_choice: "auto",
 			}),
 			expect.objectContaining({
 				timeout: expect.any(Number),

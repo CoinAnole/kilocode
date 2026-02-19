@@ -54,9 +54,9 @@ export class ChutesHandler extends RouterProvider implements SingleCompletionHan
 			return metadata?.tool_choice
 		}
 
-		// Force strict native tool-calling for Chutes Kimi K2.5 to reduce empty assistant turns.
-		if (this.isKimiK2_5TeeModel(modelId) && (!metadata.tool_choice || metadata.tool_choice === "auto")) {
-			return "required"
+		// Keep caller-specified tool policy; forcing "required" can trap Kimi in repeated tool calls.
+		if (this.isKimiK2_5TeeModel(modelId)) {
+			return metadata.tool_choice
 		}
 
 		return metadata.tool_choice
